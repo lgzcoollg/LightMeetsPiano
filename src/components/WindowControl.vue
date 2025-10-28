@@ -16,12 +16,15 @@
 import { Button } from "@/components/ui/button";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, X } from "lucide-vue-next";
+import { isTauri } from "@/lib/utils";
 
 const minimizeWindow = async () => {
+  if (!isTauri()) return;
   await getCurrentWindow().minimize();
 };
 
 const closeWindow = async () => {
+  if (!isTauri()) return;
   await getCurrentWindow().close();
 };
 </script>

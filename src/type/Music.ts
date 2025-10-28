@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isTauri } from "@/lib/utils";
 
 interface Note {
   time: number; // 时间
@@ -70,7 +71,10 @@ class Music {
       this.pendingTimeouts.push(
         setTimeout(
           () => {
-            invoke("press_key", { key: note.key });
+            // Only invoke Tauri backend when running inside Tauri
+            if (isTauri()) {
+              invoke("press_key", { key: note.key });
+            }
           },
           note.time - this.currentTime * 1000,
         ),
@@ -145,6 +149,10 @@ class Music {
    * @returns 等待窗口失去焦点的 Promise
    */
   private async waitLostFocus() {
+    // In browser dev server, there's no Tauri window. Skip waiting.
+    if (!isTauri()) {
+      return Promise.resolve();
+    }
     return new Promise<void>((resolve) => {
       const handleFocus = setInterval(async () => {
         if (await getCurrentWindow().isFocused()) {
