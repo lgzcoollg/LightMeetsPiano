@@ -1800,6 +1800,7 @@ dependencies = [
 name = "lightmeetspiano"
 version = "0.1.0"
 dependencies = [
+ "dispatch",
  "enigo",
  "inputbot",
  "once_cell",

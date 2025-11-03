@@ -50,6 +50,14 @@ class Music {
       return;
     }
     this.playLock = true;
+    // 尝试自动切换到 Sky.app（macOS 有效）。失败不影响后续流程。
+    if (isTauri()) {
+      try {
+        await invoke("focus_sky_app");
+      } catch (e) {
+        console.warn("focus_sky_app 调用失败，继续等待失焦", e);
+      }
+    }
     // 等待窗口失去焦点
     await this.waitLostFocus();
 
@@ -155,7 +163,29 @@ class Music {
     }
     return new Promise<void>((resolve) => {
       const handleFocus = setInterval(async () => {
-        if (await getCurrentWindow().isFocused()) {
+        // 等待应用窗口失去焦点，且前台应用为 Sky.app
+        const tauriWindowFocused = await getCurrentWindow().isFocused();
+        let frontName = "";
+        let bundleId = "";
+        try {
+          // 通过后端命令获取当前前台应用信息（仅 macOS 有效）
+          const info = await invoke<{ name?: string; bundle_id?: string } | null>(
+            "front_app_info",
+          );
+          frontName = (info?.name ?? "").toLowerCase();
+          bundleId = (info?.bundle_id ?? "").toLowerCase();
+        } catch (_) {
+          // 忽略获取失败，继续轮询
+        }
+
+        // 兼容多种名称/ID：Sky、Children of the Light、中文名、以及 tgc.sky
+        const namePatterns = ["sky", "children of the light", "光遇", "光·遇"]; 
+        const idPatterns = ["tgc.sky", "sky"]; // 预估 Bundle ID 片段
+        const matchName = namePatterns.some((p) => frontName.includes(p));
+        const matchId = idPatterns.some((p) => bundleId.includes(p));
+
+        // 当本窗口失焦，且前台应用匹配 Sky 时认为切到游戏
+        if (!tauriWindowFocused && (matchName || matchId)) {
           clearInterval(handleFocus);
           resolve();
         }

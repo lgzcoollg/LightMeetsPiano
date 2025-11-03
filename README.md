@@ -64,6 +64,6 @@ pnpm tauri build
 ## 注意
 
 - 因为涉及到按键模拟：Windows/Linux 需以管理员权限运行；macOS 下无需 sudo
-- 仅支持在 Windows 环境下播放音乐自动激活游戏窗口；macOS/Linux 下需要手动切换到游戏窗口
+- 仅支持在 macOS/Windows 环境下播放音乐自动激活游戏窗口；Linux 下需要手动切换到游戏窗口
 - TXT 谱仅支持 Sky Studio 导出的未加密格式，其他格式请自行转换
 - 为避免版权争议，该项目不提供任何谱子，请自行寻找
