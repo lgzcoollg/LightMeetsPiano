@@ -52,7 +52,9 @@ pub fn parse_note(key: &str) -> KeybdKey {
 
 // macOS: 使用 Enigo 进行键盘模拟
 #[cfg(target_os = "macos")]
-use enigo::{Enigo, KeyboardControllable, Key};
+use core_graphics::event::{CGEvent, CGEventTapLocation, CGKeyCode};
+#[cfg(target_os = "macos")]
+use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 #[cfg(target_os = "macos")]
 use once_cell::sync::Lazy;
 #[cfg(target_os = "macos")]
@@ -64,21 +66,21 @@ use dispatch::Queue;
 
 #[cfg(target_os = "macos")]
 pub async fn press_key(key: &str) {
-    // 兼容诸如 "1Key3" 之类带前缀的输入，截取最后一个 "Key" 起的片段供解析
     let key_for_parse = if let Some(pos) = key.rfind("Key") { &key[pos..] } else { key };
-    if let Some(k) = parse_note(key_for_parse) {
-        // 在独立阻塞线程中执行键盘事件，降低对 tokio worker 的影响，并防御潜在 panic
+    if let Some(code) = parse_note(key_for_parse) {
         let _ = tokio::task::spawn_blocking(move || {
-            let _ = std::panic::catch_unwind(|| {
-                let mut enigo = Enigo::new();
-                enigo.key_down(k);
+            if let Ok(src) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) {
+                if let Ok(down) = CGEvent::new_keyboard_event(src.clone(), code, true) {
+                    down.post(CGEventTapLocation::HID);
+                }
                 std::thread::sleep(Duration::from_millis(100));
-                enigo.key_up(k);
-            });
+                if let Ok(up) = CGEvent::new_keyboard_event(src, code, false) {
+                    up.post(CGEventTapLocation::HID);
+                }
+            }
         })
         .await;
     } else {
-        // 防御式处理：无法解析的按键字符串，避免崩溃
         println!("[macOS] 未识别的按键: {}", key);
     }
 }
@@ -87,19 +89,20 @@ pub async fn press_key(key: &str) {
 #[cfg(target_os = "macos")]
 pub fn press_key_blocking(key: &str) {
     let key_for_parse = if let Some(pos) = key.rfind("Key") { &key[pos..] } else { key };
-    match parse_note(key_for_parse) {
-        Some(k) => {
-            // 全局互斥锁，用于串行化键盘事件，避免并发导致的系统异常
-            static INPUT_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-            let _guard = INPUT_LOCK.lock().unwrap();
-            let mut enigo = Enigo::new();
-            enigo.key_down(k);
+    if let Some(code) = parse_note(key_for_parse) {
+        static INPUT_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+        let _guard = INPUT_LOCK.lock().unwrap();
+        if let Ok(src) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) {
+            if let Ok(down) = CGEvent::new_keyboard_event(src.clone(), code, true) {
+                down.post(CGEventTapLocation::HID);
+            }
             std::thread::sleep(Duration::from_millis(100));
-            enigo.key_up(k);
+            if let Ok(up) = CGEvent::new_keyboard_event(src, code, false) {
+                up.post(CGEventTapLocation::HID);
+            }
         }
-        None => {
-            println!("[macOS] 未识别的按键: {}", key);
-        }
+    } else {
+        println!("[macOS] 未识别的按键: {}", key);
     }
 }
 
@@ -108,18 +111,20 @@ pub fn press_key_blocking(key: &str) {
 static INPUT_TX: Lazy<mpsc::Sender<String>> = Lazy::new(|| {
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
-        // 在主线程执行键盘事件以避免 AppKit/objc 断言触发
         let main_q = Queue::main();
-        // 循环消费队列中的按键字符串
         for key in rx {
             let key_for_parse = if let Some(pos) = key.rfind("Key") { &key[pos..] } else { &key };
-            if let Some(k) = parse_note(key_for_parse) {
-                // 将实际的按键事件调度到主队列执行
+            if let Some(code) = parse_note(key_for_parse) {
                 main_q.exec_sync(move || {
-                    let mut enigo = Enigo::new();
-                    enigo.key_down(k);
-                    std::thread::sleep(Duration::from_millis(100));
-                    enigo.key_up(k);
+                    if let Ok(src) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) {
+                        if let Ok(down) = CGEvent::new_keyboard_event(src.clone(), code, true) {
+                            down.post(CGEventTapLocation::HID);
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                        if let Ok(up) = CGEvent::new_keyboard_event(src, code, false) {
+                            up.post(CGEventTapLocation::HID);
+                        }
+                    }
                 });
             } else {
                 println!("[macOS] 未识别的按键: {}", key);
@@ -136,33 +141,26 @@ pub fn enqueue_key(key: &str) {
 }
 
 #[cfg(target_os = "macos")]
-pub fn parse_note(key: &str) -> Option<Key> {
-    // 允许两种输入："Key<数字>" 或直接字符（如 "y"、";"）
+pub fn parse_note(key: &str) -> Option<CGKeyCode> {
     if let Some(num) = key.strip_prefix("Key") {
         return match num {
-            "0" => Some(Key::Layout('y')),
-            "1" => Some(Key::Layout('u')),
-            "2" => Some(Key::Layout('i')),
-            "3" => Some(Key::Layout('o')),
-            "4" => Some(Key::Layout('p')),
-            "5" => Some(Key::Layout('h')),
-            "6" => Some(Key::Layout('j')),
-            "7" => Some(Key::Layout('k')),
-            "8" => Some(Key::Layout('l')),
-            "9" => Some(Key::Layout(';')),
-            "10" => Some(Key::Layout('n')),
-            "11" => Some(Key::Layout('m')),
-            "12" => Some(Key::Layout(',')),
-            "13" => Some(Key::Layout('.')),
-            "14" => Some(Key::Layout('/')),
+            "0" => Some(16),
+            "1" => Some(32),
+            "2" => Some(34),
+            "3" => Some(31),
+            "4" => Some(35),
+            "5" => Some(4),
+            "6" => Some(38),
+            "7" => Some(40),
+            "8" => Some(37),
+            "9" => Some(41),
+            "10" => Some(45),
+            "11" => Some(46),
+            "12" => Some(43),
+            "13" => Some(47),
+            "14" => Some(44),
             _ => None,
         };
-    }
-
-    // 若不是 "Key<number>" 格式，尝试按单字符解析（如 "y"、";" 等）
-    if key.len() == 1 {
-        let ch = key.chars().next().unwrap();
-        return Some(Key::Layout(ch));
     }
 
     None
